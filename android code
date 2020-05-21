@@ -1,0 +1,594 @@
+package at.abraxas.amarino;
+import java.util.ArrayList;
+import android.content.ContentValues;
+import android.content.Context;
+import android.database.Cursor;
+import android.database.SQLException;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.util.Log;
+import at.abraxas.amarino.log.Logger;
+
+public class AmarinoDbAdapter {
+	
+	public static final String KEY_DEVICE_ID = "_id";
+	public static final String KEY_DEVICE_NAME = "name";
+	public static final String KEY_DEVICE_ADDRESS = "device_address";
+	
+	public static final String KEY_EVENT_ID = "_id";
+	public static final String KEY_EVENT_NAME = "event_name";
+	public static final String KEY_EVENT_DESC = "desc";
+	public static final String KEY_EVENT_VISUALIZER = "visualizer";
+	public static final String KEY_EVENT_VISUALIZER_MIN = "minVal";
+	public static final String KEY_EVENT_VISUALIZER_MAX = "maxVal";
+	public static final String KEY_EVENT_FLAG = "flag";
+	public static final String KEY_EVENT_PACKAGE_NAME = "package";
+	public static final String KEY_EVENT_EDIT_CLASS_NAME = "edit_class";
+	public static final String KEY_EVENT_SERVICE_CLASS_NAME = "service_class";
+	public static final String KEY_EVENT_PLUGIN_ID = "plugin_id";
+	public static final String KEY_EVENT_DEVICE_ID = "device_id";
+	
+	private static final boolean DEBUG = true;
+	private static final String TAG = "AmarinoDbAdapter";
+	private static final int DATABASE_VERSION = 2;
+	
+	private static final String DATABASE_NAME = "amarino_2.db";
+	private static final String DEVICE_TABLE_NAME = "devices_tbl";
+	private static final String EVENT_TABLE_NAME = "events_tbl";
+	
+
+	private DatabaseHelper mDbHelper;
+    private SQLiteDatabase mDb;
+    private final Context mCtx;
+	
+	
+	private static class DatabaseHelper extends SQLiteOpenHelper {
+
+        DatabaseHelper(Context context) {
+            super(context, DATABASE_NAME, null, DATABASE_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+        	Log.d(TAG, "create database tables");
+        	/* Create Devices Table */
+        	db.execSQL("CREATE TABLE " + DEVICE_TABLE_NAME + " ("
+                    + KEY_DEVICE_ID + " INTEGER PRIMARY KEY,"
+                    + KEY_DEVICE_ADDRESS + " TEXT UNIQUE,"
+                    + KEY_DEVICE_NAME  + " TEXT"
+                    + ");");
+        	
+        	db.execSQL("CREATE TABLE " + EVENT_TABLE_NAME + " ("
+        			+ KEY_EVENT_ID + " INTEGER PRIMARY KEY,"
+                    + KEY_EVENT_NAME + " TEXT NOT NULL,"
+                    + KEY_EVENT_DESC  + " TEXT,"
+                    + KEY_EVENT_VISUALIZER  + " INTEGER,"
+                    + KEY_EVENT_VISUALIZER_MIN  + " NUMBER,"
+                    + KEY_EVENT_VISUALIZER_MAX  + " NUMBER,"
+                    + KEY_EVENT_FLAG  + " INTEGER NOT NULL,"
+                    + KEY_EVENT_PACKAGE_NAME  + " TEXT NOT NULL,"
+                    + KEY_EVENT_EDIT_CLASS_NAME  + " TEXT NOT NULL,"
+                    + KEY_EVENT_SERVICE_CLASS_NAME  + " TEXT NOT NULL,"
+                    + KEY_EVENT_PLUGIN_ID  + " INTEGER NOT NULL,"
+                    + KEY_EVENT_DEVICE_ID  + " INTEGER REFERENCES " + DEVICE_TABLE_NAME + "(_id) "
+                    + ");");
+        	
+        }
+        
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            Log.w(TAG, "Upgrading database from version " + oldVersion + " to "
+                    + newVersion + ", which will destroy all old data");
+            
+            db.execSQL("DROP TABLE IF EXISTS " + DEVICE_TABLE_NAME);
+            db.execSQL("DROP TABLE IF EXISTS " + EVENT_TABLE_NAME);
+            onCreate(db);
+            Log.d(TAG, "upgrade db");
+        }
+        
+	}
+	
+    public AmarinoDbAdapter(Context ctx) {
+        this.mCtx = ctx;
+    }
+    
+    
+    public AmarinoDbAdapter open() throws SQLException {
+        mDbHelper = new DatabaseHelper(mCtx);
+        mDb = mDbHelper.getWritableDatabase();
+        return this;
+    }
+    
+    public void close() {
+        mDbHelper.close();
+    }
+ 
+    public long createDevice(BTDevice device) {
+        ContentValues initialValues = new ContentValues();
+        initialValues.put(KEY_DEVICE_ADDRESS, device.address);
+        initialValues.put(KEY_DEVICE_NAME, (device.name == null) ? "NONAME" : device.name);
+
+        return mDb.insert(DEVICE_TABLE_NAME, null, initialValues);
+    }
+   
+    public boolean deleteDevice(long deviceId) {
+    	int numEvents = deleteEvents(deviceId);
+    	if (DEBUG) Logger.d(TAG, "delete device with id " + deviceId + ": " + numEvents + " associated events removed");
+        return mDb.delete(DEVICE_TABLE_NAME, KEY_DEVICE_ID + "=" + deviceId, null) > 0;
+    }
+    
+    public BTDevice getDevice(String address){
+    	BTDevice device = null;
+    	Cursor c = mDb.query(DEVICE_TABLE_NAME, null, KEY_DEVICE_ADDRESS + " like ?", new String[]{address}, null, null, null);
+
+        if (c == null){
+        	return null;
+        }
+        if (c.moveToFirst()){	
+    		String name = c.getString(c.getColumnIndex(KEY_DEVICE_NAME));
+    		long id = c.getLong(c.getColumnIndex(KEY_DEVICE_ID));
+    		device = new BTDevice(id, address, name);
+        }
+        c.close();
+    	return device;
+    }
+  
+    public ArrayList<BTDevice> fetchAllDevices() {
+    	ArrayList<BTDevice> devices = new ArrayList<BTDevice>();
+    	
+        Cursor c = mDb.query(DEVICE_TABLE_NAME, null, null, null, null, null, null);
+
+        if (c == null){
+        	return devices;
+        }
+        if (c.moveToFirst()){	
+        	do {
+        		String address = c.getString(c.getColumnIndex(KEY_DEVICE_ADDRESS));
+        		String name = c.getString(c.getColumnIndex(KEY_DEVICE_NAME));
+        		long id = c.getLong(c.getColumnIndex(KEY_DEVICE_ID));
+        		devices.add(new BTDevice(id, address, name));
+        	}
+        	while(c.moveToNext());
+        }
+
+        c.close();
+        return devices;
+    }
+   
+    public long createEvent(Event event) {
+        ContentValues initialValues = new ContentValues();
+        initialValues.put(KEY_EVENT_NAME, event.name);
+        initialValues.put(KEY_EVENT_DESC, event.desc);
+        initialValues.put(KEY_EVENT_VISUALIZER, event.visualizer);
+        initialValues.put(KEY_EVENT_VISUALIZER_MIN, event.visualizerMinValue);
+        initialValues.put(KEY_EVENT_VISUALIZER_MAX, event.visualizerMaxValue);
+        initialValues.put(KEY_EVENT_FLAG, (int)event.flag);
+        initialValues.put(KEY_EVENT_PACKAGE_NAME, event.packageName);
+        initialValues.put(KEY_EVENT_EDIT_CLASS_NAME, event.editClassName);
+        initialValues.put(KEY_EVENT_SERVICE_CLASS_NAME, event.serviceClassName);
+        initialValues.put(KEY_EVENT_PLUGIN_ID, event.pluginId);
+        initialValues.put(KEY_EVENT_DEVICE_ID, event.deviceId);
+
+        return mDb.insert(EVENT_TABLE_NAME, null, initialValues);
+    }
+   
+    public boolean deleteEvent(long rowId) {
+        return mDb.delete(EVENT_TABLE_NAME, KEY_EVENT_ID + "=" + rowId, null) > 0;
+    }
+   
+    public int deleteEvents(long deviceId){
+    	return mDb.delete(EVENT_TABLE_NAME, KEY_EVENT_DEVICE_ID + "=" + deviceId, null);
+    }
+    
+    public Event getEvent(long deviceId, int pluginId){
+    	Event e = null;
+    	Cursor c = mDb.query(EVENT_TABLE_NAME, null, 
+    			KEY_EVENT_DEVICE_ID + "=? AND " + KEY_EVENT_PLUGIN_ID + "=?", 
+        		new String[]{String.valueOf(deviceId), String.valueOf(pluginId)}, null, null, null);
+    	
+    	if (c == null){
+        	if (DEBUG) Logger.d(TAG, "no event found for device with id: " + deviceId + " and pluginId:" + pluginId);
+        	return null;
+        }
+        if (c.moveToFirst()){
+ 	    	long id = c.getLong(c.getColumnIndex(KEY_EVENT_ID));
+			String name = c.getString(c.getColumnIndex(KEY_EVENT_NAME));
+			String desc = c.getString(c.getColumnIndex(KEY_EVENT_DESC));
+			int visualizer = c.getInt(c.getColumnIndex(KEY_EVENT_VISUALIZER));
+			float minVal = c.getFloat(c.getColumnIndex(KEY_EVENT_VISUALIZER_MIN));
+			float maxVal = c.getFloat(c.getColumnIndex(KEY_EVENT_VISUALIZER_MAX));
+			char flag = (char) c.getInt(c.getColumnIndex(KEY_EVENT_FLAG));
+			String packageName= c.getString(c.getColumnIndex(KEY_EVENT_PACKAGE_NAME));
+			String editClassName= c.getString(c.getColumnIndex(KEY_EVENT_EDIT_CLASS_NAME));
+			String serviceClassName= c.getString(c.getColumnIndex(KEY_EVENT_SERVICE_CLASS_NAME));
+
+			e = new Event(id, name, desc, visualizer, flag, packageName, editClassName,
+					serviceClassName, pluginId, deviceId);
+			e.visualizerMinValue = minVal;
+			e.visualizerMaxValue = maxVal;
+        }
+        
+        c.close();
+		return e;
+    }
+   
+    public ArrayList<Event> fetchEvents(long deviceId) {
+    	ArrayList<Event> events = new ArrayList<Event>();
+    	
+        Cursor c = mDb.query(EVENT_TABLE_NAME, null, KEY_EVENT_DEVICE_ID + "=" + deviceId , 
+        		null, null, null, null);
+
+        if (c == null){
+        	if (DEBUG) Logger.d(TAG, "no events found for device with id: " + deviceId);
+        	return events;
+        }
+        if (c.moveToFirst()){	
+        	do {
+        		long id = c.getLong(c.getColumnIndex(KEY_EVENT_ID));
+        		String name = c.getString(c.getColumnIndex(KEY_EVENT_NAME));
+        		String desc = c.getString(c.getColumnIndex(KEY_EVENT_DESC));
+        		int visualizer = c.getInt(c.getColumnIndex(KEY_EVENT_VISUALIZER));
+        		float minVal = c.getFloat(c.getColumnIndex(KEY_EVENT_VISUALIZER_MIN));
+        		float maxVal = c.getFloat(c.getColumnIndex(KEY_EVENT_VISUALIZER_MAX));
+        		char flag = (char) c.getInt(c.getColumnIndex(KEY_EVENT_FLAG));
+        		String packageName= c.getString(c.getColumnIndex(KEY_EVENT_PACKAGE_NAME));
+        		String editClassName= c.getString(c.getColumnIndex(KEY_EVENT_EDIT_CLASS_NAME));
+        		String serviceClassName= c.getString(c.getColumnIndex(KEY_EVENT_SERVICE_CLASS_NAME));
+        		int pluginId = c.getInt(c.getColumnIndex(KEY_EVENT_PLUGIN_ID));
+        		
+        		Event e = new Event(id, name, desc, visualizer, flag, packageName, editClassName,
+        				serviceClassName, pluginId, deviceId);
+        		e.visualizerMinValue = minVal;
+        		e.visualizerMaxValue = maxVal;
+        		
+        		events.add(e);
+        		if (DEBUG) Logger.d(TAG, "event found: " + e.name + " - id=" + e.pluginId);
+        	}
+        	while(c.moveToNext());
+        }
+        else {
+        	if (DEBUG) Logger.d(TAG, "no events found for device with id: " + deviceId);
+        }
+
+        c.close();
+        return events;
+    }
+    
+    
+    public int updateEvent(Event event){
+    	ContentValues values = new ContentValues();
+
+    	values.put(KEY_EVENT_VISUALIZER, event.visualizer);
+    	values.put(KEY_EVENT_VISUALIZER_MIN, event.visualizerMinValue);
+    	values.put(KEY_EVENT_VISUALIZER_MAX, event.visualizerMaxValue);
+        
+    	return mDb.update(EVENT_TABLE_NAME, values, KEY_EVENT_ID + "=" + event.id, null);
+    }
+    
+
+
+}
+
+Monitoring.java
+
+package at.abraxas.amarino;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Dialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.hardware.SensorListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.preference.PreferenceManager;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.View.OnTouchListener;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+import at.abraxas.amarino.log.LogListener;
+import at.abraxas.amarino.log.Logger;
+
+
+public class Monitoring extends Activity implements LogListener, View.OnClickListener,SensorListener {
+	
+	private static final int DIALOG_FLAGS = 1;
+	private static final int DIALOG_DEVICES = 2;
+	
+	private static final String KEY_FLAG_PREF = "flag_pref";
+	private static final int MAX_ENTRIES = 400;
+	
+	private Button monitoringBtn;
+	private Button flagBtn;
+	private EditText dataToSendET;
+	private ScrollView logScrollView;
+	private TextView logTV;
+	private Handler handler;
+	
+	private int logEntries = 0;
+	private boolean monitoring;
+	private boolean userTouch = false;
+	String[] addresses; // connected devices
+	String[] flags;
+	char selectedFlag;
+	
+	SensorManager sm = null;
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		
+		setTitle(R.string.monitoring_title);
+		setContentView(R.layout.monitoring);
+
+		handler = new Handler();
+		 sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+		 
+		 
+		monitoringBtn = (Button)findViewById(R.id.monitoring_btn);
+		flagBtn = (Button)findViewById(R.id.flag_btn);
+		dataToSendET = (EditText)findViewById(R.id.data_to_send);
+		logScrollView = (ScrollView)findViewById(R.id.log_scroll);
+		logTV = (TextView)findViewById(R.id.log);
+		
+		logTV.setText("========== Logging Window ==========\n");
+		
+		monitoring = PreferenceManager.getDefaultSharedPreferences(Monitoring.this)
+			.getBoolean(Logger.KEY_IS_LOG_ENABLED, true);
+		
+		updateMonitoringState();
+		
+		
+		
+		findViewById(R.id.send_btn).setOnClickListener(this);
+		findViewById(R.id.clear_btn).setOnClickListener(this);
+		monitoringBtn.setOnClickListener(this);
+		flagBtn.setOnClickListener(this);
+		
+		logScrollView.setOnTouchListener(new View.OnTouchListener() {
+			
+			public boolean onTouch(View v, MotionEvent event) {
+				if (!userTouch && event.getAction() == MotionEvent.ACTION_DOWN){
+					userTouch = true;
+				}
+				else if (userTouch && event.getAction() == MotionEvent.ACTION_UP){
+					userTouch = false;
+				}
+				return false;
+			}
+		});
+		
+		setupFlagsArray();
+		selectedFlag = (char)PreferenceManager.getDefaultSharedPreferences(this).getInt(KEY_FLAG_PREF, 65);  // default 'A'
+		flagBtn.setText(getString(R.string.flag_btn, selectedFlag));
+		
+		IntentFilter intentFilter = new IntentFilter(AmarinoIntent.ACTION_CONNECTED_DEVICES);
+	    registerReceiver(receiver, intentFilter);
+	    
+	    Intent intent = new Intent(Monitoring.this, AmarinoService.class);
+		intent.setAction(AmarinoIntent.ACTION_GET_CONNECTED_DEVICES);
+		Monitoring.this.startService(intent);
+	}
+
+	private void setupFlagsArray() {
+		flags = new String[52];
+		for (int i=0;i<52;i++){
+			char flag;
+			if (i<26)
+				flag = (char) ('A' + i);
+			else
+				flag = (char) ('a' + i-26); 
+			flags[i] = String.valueOf(flag);
+		}
+	}
+	
+	@Override
+	protected void onStart() {
+		super.onStart();
+		logScrollView.fullScroll(View.FOCUS_DOWN);
+	}
+
+	@Override
+	protected void onStop() {
+		super.onStop();
+		// remember last selected flag
+		PreferenceManager.getDefaultSharedPreferences(this).edit()
+			.putInt(KEY_FLAG_PREF, selectedFlag).commit();
+		Logger.unregisterLogListener(this);
+		unregisterReceiver(receiver);
+		sm.unregisterListener(this);
+	}
+	
+	
+	
+	private void clearLogClickHandler(View target){
+		logTV.setText("========== Logging Window ==========\n");
+		Logger.clear();
+		updateMonitoringState();
+	}
+	
+	
+	private void updateMonitoringState(){
+		if (monitoring) {
+			monitoringBtn.setText("Disable Monitoring");
+
+			logTV.append("Monitoring enabled!\n");
+			logTV.append(Logger.getLog());
+			logScrollView.smoothScrollBy(0, logTV.getHeight());
+			Logger.registerLogListener(this);
+			Logger.enabled = true;
+		}
+		else {
+			monitoringBtn.setText("Enable Monitoring");
+			Logger.enabled = false;
+			Logger.unregisterLogListener(this);
+			logTV.append("Monitoring disabled!\n");
+		}
+	}
+	
+	private void sendData(String address, String msg){
+		Intent intent = new Intent(Monitoring.this, AmarinoService.class);
+		intent.setAction(AmarinoIntent.ACTION_SEND);
+		intent.putExtra(AmarinoIntent.EXTRA_DEVICE_ADDRESS, address);
+		intent.putExtra(AmarinoIntent.EXTRA_FLAG, selectedFlag);
+		intent.putExtra(AmarinoIntent.EXTRA_DATA_TYPE, AmarinoIntent.STRING_EXTRA);
+		intent.putExtra(AmarinoIntent.EXTRA_DATA, msg);
+		Monitoring.this.startService(intent);
+	}
+	
+	
+
+	public void logChanged(final String lastAddedMsg) {
+		logEntries++;
+
+		handler.post(new Runnable() {
+			
+			public void run() {
+				if (logEntries > MAX_ENTRIES){
+					int size = logTV.getText().length();
+					logTV.setText(logTV.getText().subSequence(size/2, size));
+					logEntries /= 2;
+				}
+				logTV.append(lastAddedMsg + "\n");
+				if (!userTouch){
+					logScrollView.post(new Runnable() {
+						
+						public void run() {
+							logScrollView.smoothScrollBy(0, 60);
+						}
+					});
+				}
+			}
+		});
+	}
+	
+	@Override
+    protected Dialog onCreateDialog(int id) {
+		 switch (id) {
+	        case DIALOG_FLAGS:
+	        	return new AlertDialog.Builder(Monitoring.this)
+	        		.setTitle("Choose your flag")
+	        		.setItems(flags, new DialogInterface.OnClickListener() {
+						
+						public void onClick(DialogInterface dialog, int which) {
+							String flag = flags[which];
+							flagBtn.setText(Monitoring.this.getString(R.string.flag_btn, flag));
+							selectedFlag = flag.charAt(0);
+						}
+					})
+					.create();
+	        	
+	        case DIALOG_DEVICES:
+	        	return new AlertDialog.Builder(Monitoring.this)
+        		.setTitle("Send data to:")
+        		.setItems(addresses, new DialogInterface.OnClickListener() {
+					
+					public void onClick(DialogInterface dialog, int which) {
+						sendData(addresses[which], dataToSendET.getText().toString());
+					}
+				})
+				.create();
+		 }
+		 return null;
+	}
+	
+	
+	 @Override
+	    public boolean onTouchEvent(MotionEvent event) {
+	    	Toast.makeText(this, "touch events from screen",60000).show();
+	    	//sendData(addresses[0], "4");
+	    	return true;
+	    }
+	    
+	 public void onSensorChanged(int sensor, float[] values) {
+	        synchronized (this) {
+	        Toast.makeText(this, "sensorvalue changing",60000).show();
+	        	if (sensor == SensorManager.SENSOR_ORIENTATION) {
+	        		if(values[2]>4.5){
+	        			sendData(addresses[0], "4");
+	        		}
+	        		else if(values[2]<4.5){
+	        			sendData(addresses[0], "3");
+	        		}
+	        		else{
+	        			sendData(addresses[0], "1");
+	        		}
+	        	}
+	        }
+	 }
+	public void onClick(View v) {
+		switch (v.getId()){
+		case R.id.monitoring_btn:
+			
+			sm.registerListener(Monitoring.this, 
+	                SensorManager.SENSOR_ORIENTATION |
+	        		SensorManager.SENSOR_ACCELEROMETER,
+	                SensorManager.SENSOR_DELAY_NORMAL);
+			/*monitoring = !monitoring;
+			PreferenceManager.getDefaultSharedPreferences(Monitoring.this)
+				.edit()
+				.putBoolean(Logger.KEY_IS_LOG_ENABLED, monitoring)
+				.commit();
+			updateMonitoringState();*/
+			break;
+		case R.id.flag_btn:
+			//showDialog(DIALOG_FLAGS);
+			 sm.unregisterListener(this);
+			sendData(addresses[0], "2");
+			break;
+			
+		case R.id.send_btn:
+			
+			
+				
+			if (addresses == null){
+				
+				Toast.makeText(Monitoring.this, "No connected device found!\n\nData not sent.", Toast.LENGTH_SHORT).show();
+			}
+			else if (addresses.length == 1){
+				
+				
+				 sm.unregisterListener(this);
+sendData(addresses[0], "5");
+			}
+			else {
+				// several connected devices, we need to show a dialog and ask where to send the data
+				showDialog(DIALOG_DEVICES);
+			}
+			break;
+			
+		case R.id.clear_btn:
+			//clearLogClickHandler(v);
+			 sm.unregisterListener(this);
+			sendData(addresses[0], "1");	break;
+		}}
+	
+	BroadcastReceiver receiver = new BroadcastReceiver() {
+			@Override
+		public void onReceive(Context context, Intent intent) {
+			
+			String action = intent.getAction();
+			if (action == null) return;
+			
+			If
+(AmarinoIntent.ACTION_CONNECTED_DEVICES.equals(action)){
+				addresses = intent.getStringArrayExtra(AmarinoIntent.EXTRA_CONNECTED_DEVICE_ADDRESSES);
+			}
+		}
+	};
+	Public void onAccuracyChanged(int arg0, int arg1) {
+		// TODO Auto-generated method stub
+		}
+	
+}
+
+
+
+
